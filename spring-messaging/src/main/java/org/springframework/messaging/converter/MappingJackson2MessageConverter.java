@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2019 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,8 +22,6 @@ import java.io.StringWriter;
 import java.io.Writer;
 import java.lang.reflect.Type;
 import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.fasterxml.jackson.annotation.JsonView;
@@ -74,7 +72,7 @@ public class MappingJackson2MessageConverter extends AbstractMessageConverter {
 	 * the {@code application/json} MIME type with {@code UTF-8} character set.
 	 */
 	public MappingJackson2MessageConverter() {
-		super(new MimeType("application", "json", StandardCharsets.UTF_8));
+		super(new MimeType("application", "json"));
 		this.objectMapper = initObjectMapper();
 	}
 
@@ -85,7 +83,7 @@ public class MappingJackson2MessageConverter extends AbstractMessageConverter {
 	 * @since 4.1.5
 	 */
 	public MappingJackson2MessageConverter(MimeType... supportedMimeTypes) {
-		super(Arrays.asList(supportedMimeTypes));
+		super(supportedMimeTypes);
 		this.objectMapper = initObjectMapper();
 	}
 
@@ -211,9 +209,11 @@ public class MappingJackson2MessageConverter extends AbstractMessageConverter {
 		JavaType javaType = getJavaType(targetClass, conversionHint);
 		Object payload = message.getPayload();
 		Class<?> view = getSerializationView(conversionHint);
-		// Note: in the view case, calling withType instead of forType for compatibility with Jackson <2.5
 		try {
-			if (payload instanceof byte[]) {
+			if (targetClass.isInstance(payload)) {
+				return payload;
+			}
+			else if (payload instanceof byte[]) {
 				if (view != null) {
 					return this.objectMapper.readerWithView(view).forType(javaType).readValue((byte[]) payload);
 				}
@@ -221,10 +221,8 @@ public class MappingJackson2MessageConverter extends AbstractMessageConverter {
 					return this.objectMapper.readValue((byte[]) payload, javaType);
 				}
 			}
-			else if (targetClass.isInstance(payload)) {
-				return payload;
-			}
 			else {
+				// Assuming a text-based source payload
 				if (view != null) {
 					return this.objectMapper.readerWithView(view).forType(javaType).readValue(payload.toString());
 				}
@@ -273,7 +271,8 @@ public class MappingJackson2MessageConverter extends AbstractMessageConverter {
 				payload = out.toByteArray();
 			}
 			else {
-				Writer writer = new StringWriter();
+				// Assuming a text-based target payload
+				Writer writer = new StringWriter(1024);
 				if (view != null) {
 					this.objectMapper.writerWithView(view).writeValue(writer, payload);
 				}

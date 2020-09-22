@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2019 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -27,26 +27,26 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import org.springframework.core.ResolvableType;
+import org.springframework.core.ResolvableTypeProvider;
 import org.springframework.core.codec.CharSequenceEncoder;
 import org.springframework.core.codec.CodecException;
 import org.springframework.core.codec.Hints;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferFactory;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.core.io.buffer.PooledDataBuffer;
 import org.springframework.core.log.LogFormatUtils;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ReactiveHttpOutputMessage;
-import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.http.codec.EncoderHttpMessageWriter;
 import org.springframework.http.codec.FormHttpMessageWriter;
 import org.springframework.http.codec.HttpMessageWriter;
@@ -133,8 +133,7 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 	}
 
 	private static List<MediaType> initMediaTypes(@Nullable HttpMessageWriter<?> formWriter) {
-		List<MediaType> result = new ArrayList<>();
-		result.add(MediaType.MULTIPART_FORM_DATA);
+		List<MediaType> result = new ArrayList<>(MultipartHttpMessageReader.MIME_TYPES);
 		if (formWriter != null) {
 			result.addAll(formWriter.getWritableMediaTypes());
 		}
@@ -148,6 +147,16 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 	 */
 	public List<HttpMessageWriter<?>> getPartWriters() {
 		return Collections.unmodifiableList(this.partWriters);
+	}
+
+
+	/**
+	 * Return the configured form writer.
+	 * @since 5.1.13
+	 */
+	@Nullable
+	public HttpMessageWriter<MultiValueMap<String, String>> getFormWriter() {
+		return this.formWriter;
 	}
 
 	/**
@@ -188,7 +197,7 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 		return Mono.from(inputStream)
 				.flatMap(map -> {
 					if (this.formWriter == null || isMultipart(map, mediaType)) {
-						return writeMultipart(map, outputMessage, hints);
+						return writeMultipart(map, outputMessage, mediaType, hints);
 					}
 					else {
 						@SuppressWarnings("unchecked")
@@ -200,10 +209,10 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 
 	private boolean isMultipart(MultiValueMap<String, ?> map, @Nullable MediaType contentType) {
 		if (contentType != null) {
-			return MediaType.MULTIPART_FORM_DATA.includes(contentType);
+			return contentType.getType().equalsIgnoreCase("multipart");
 		}
-		for (String name : map.keySet()) {
-			for (Object value : map.get(name)) {
+		for (List<?> values : map.values()) {
+			for (Object value : values) {
 				if (value != null && !(value instanceof String)) {
 					return true;
 				}
@@ -212,16 +221,22 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 		return false;
 	}
 
-	private Mono<Void> writeMultipart(
-			MultiValueMap<String, ?> map, ReactiveHttpOutputMessage outputMessage, Map<String, Object> hints) {
+	private Mono<Void> writeMultipart(MultiValueMap<String, ?> map,
+			ReactiveHttpOutputMessage outputMessage, @Nullable MediaType mediaType, Map<String, Object> hints) {
 
 		byte[] boundary = generateMultipartBoundary();
 
-		Map<String, String> params = new HashMap<>(2);
+		Map<String, String> params = new HashMap<>();
+		if (mediaType != null) {
+			params.putAll(mediaType.getParameters());
+		}
 		params.put("boundary", new String(boundary, StandardCharsets.US_ASCII));
 		params.put("charset", getCharset().name());
 
-		outputMessage.getHeaders().setContentType(new MediaType(MediaType.MULTIPART_FORM_DATA, params));
+		mediaType = (mediaType != null ? mediaType : MediaType.MULTIPART_FORM_DATA);
+		mediaType = new MediaType(mediaType, params);
+
+		outputMessage.getHeaders().setContentType(mediaType);
 
 		LogFormatUtils.traceDebug(logger, traceOn -> Hints.getLogPrefix(hints) + "Encoding " +
 				(isEnableLoggingRequestDetails() ?
@@ -233,7 +248,7 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 		Flux<DataBuffer> body = Flux.fromIterable(map.entrySet())
 				.concatMap(entry -> encodePartValues(boundary, entry.getKey(), entry.getValue(), bufferFactory))
 				.concatWith(generateLastLine(boundary, bufferFactory))
-				.doOnDiscard(PooledDataBuffer.class, PooledDataBuffer::release);
+				.doOnDiscard(PooledDataBuffer.class, DataBufferUtils::release);
 
 		return outputMessage.writeWith(body);
 	}
@@ -249,8 +264,8 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 	private Flux<DataBuffer> encodePartValues(
 			byte[] boundary, String name, List<?> values, DataBufferFactory bufferFactory) {
 
-		return Flux.concat(values.stream().map(v ->
-				encodePart(boundary, name, v, bufferFactory)).collect(Collectors.toList()));
+		return Flux.fromIterable(values)
+				.concatMap(value -> encodePart(boundary, name, value, bufferFactory));
 	}
 
 	@SuppressWarnings("unchecked")
@@ -265,11 +280,8 @@ public class MultipartHttpMessageWriter extends LoggingCodecSupport
 			outputHeaders.putAll(httpEntity.getHeaders());
 			body = httpEntity.getBody();
 			Assert.state(body != null, "MultipartHttpMessageWriter only supports HttpEntity with body");
-
-			if (httpEntity instanceof MultipartBodyBuilder.PublisherEntity<?, ?>) {
-				MultipartBodyBuilder.PublisherEntity<?, ?> publisherEntity =
-						(MultipartBodyBuilder.PublisherEntity<?, ?>) httpEntity;
-				resolvableType = publisherEntity.getResolvableType();
+			if (httpEntity instanceof ResolvableTypeProvider) {
+				resolvableType = ((ResolvableTypeProvider) httpEntity).getResolvableType();
 			}
 		}
 		else {

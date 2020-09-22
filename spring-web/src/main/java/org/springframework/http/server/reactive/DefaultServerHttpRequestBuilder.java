@@ -1,5 +1,5 @@
 /*
- * Copyright 2002-2018 the original author or authors.
+ * Copyright 2002-2020 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@ package org.springframework.http.server.reactive;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.util.Arrays;
 import java.util.LinkedList;
 import java.util.function.Consumer;
 
@@ -70,6 +71,7 @@ class DefaultServerHttpRequestBuilder implements ServerHttpRequest.Builder {
 
 		this.uri = original.getURI();
 		this.httpMethodValue = original.getMethodValue();
+		this.contextPath = original.getPath().contextPath().value();
 		this.body = original.getBody();
 
 		this.httpHeaders = HttpHeaders.writableHttpHeaders(original.getHeaders());
@@ -111,8 +113,8 @@ class DefaultServerHttpRequestBuilder implements ServerHttpRequest.Builder {
 	}
 
 	@Override
-	public ServerHttpRequest.Builder header(String key, String value) {
-		this.httpHeaders.add(key, value);
+	public ServerHttpRequest.Builder header(String headerName, String... headerValues) {
+		this.httpHeaders.put(headerName, Arrays.asList(headerValues));
 		return this;
 	}
 
@@ -181,9 +183,6 @@ class DefaultServerHttpRequestBuilder implements ServerHttpRequest.Builder {
 		private final MultiValueMap<String, HttpCookie> cookies;
 
 		@Nullable
-		private final InetSocketAddress remoteAddress;
-
-		@Nullable
 		private final SslInfo sslInfo;
 
 		private final Flux<DataBuffer> body;
@@ -198,7 +197,6 @@ class DefaultServerHttpRequestBuilder implements ServerHttpRequest.Builder {
 			super(uri, contextPath, headers);
 			this.methodValue = methodValue;
 			this.cookies = cookies;
-			this.remoteAddress = originalRequest.getRemoteAddress();
 			this.sslInfo = sslInfo != null ? sslInfo : originalRequest.getSslInfo();
 			this.body = body;
 			this.originalRequest = originalRequest;
@@ -214,14 +212,20 @@ class DefaultServerHttpRequestBuilder implements ServerHttpRequest.Builder {
 			return this.cookies;
 		}
 
-		@Nullable
 		@Override
-		public InetSocketAddress getRemoteAddress() {
-			return this.remoteAddress;
+		@Nullable
+		public InetSocketAddress getLocalAddress() {
+			return this.originalRequest.getLocalAddress();
 		}
 
-		@Nullable
 		@Override
+		@Nullable
+		public InetSocketAddress getRemoteAddress() {
+			return this.originalRequest.getRemoteAddress();
+		}
+
+		@Override
+		@Nullable
 		protected SslInfo initSslInfo() {
 			return this.sslInfo;
 		}

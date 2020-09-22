@@ -35,6 +35,7 @@ import org.springframework.core.annotation.AnnotationUtils;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.core.codec.Hints;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.codec.HttpMessageReader;
@@ -78,7 +79,7 @@ public abstract class AbstractMessageReaderArgumentResolver extends HandlerMetho
 
 	/**
 	 * Constructor with {@link HttpMessageReader}'s and a {@link Validator}.
-	 * @param readers readers to convert from the request body
+	 * @param readers the readers to convert from the request body
 	 */
 	protected AbstractMessageReaderArgumentResolver(List<HttpMessageReader<?>> readers) {
 		this(readers, ReactiveAdapterRegistry.getSharedInstance());
@@ -205,7 +206,8 @@ public abstract class AbstractMessageReaderArgumentResolver extends HandlerMetho
 
 		HttpMethod method = request.getMethod();
 		if (contentType == null && method != null && SUPPORTED_METHODS.contains(method)) {
-			Flux<DataBuffer> body = request.getBody().doOnNext(o -> {
+			Flux<DataBuffer> body = request.getBody().doOnNext(buffer -> {
+				DataBufferUtils.release(buffer);
 				// Body not empty, back to 415..
 				throw new UnsupportedMediaTypeStatusException(mediaType, this.supportedMediaTypes, elementType);
 			});

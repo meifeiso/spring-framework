@@ -19,6 +19,7 @@ package org.springframework.jms.listener;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Executor;
+
 import javax.jms.Connection;
 import javax.jms.JMSException;
 import javax.jms.MessageConsumer;
@@ -309,7 +310,7 @@ public class DefaultMessageListenerContainer extends AbstractPollingMessageListe
 			int separatorIndex = concurrency.indexOf('-');
 			if (separatorIndex != -1) {
 				setConcurrentConsumers(Integer.parseInt(concurrency.substring(0, separatorIndex)));
-				setMaxConcurrentConsumers(Integer.parseInt(concurrency.substring(separatorIndex + 1, concurrency.length())));
+				setMaxConcurrentConsumers(Integer.parseInt(concurrency.substring(separatorIndex + 1)));
 			}
 			else {
 				setConcurrentConsumers(1);
